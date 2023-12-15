@@ -39,6 +39,9 @@ from sensor_msgs.msg import Image
 from geometry_msgs.msg import PoseArray, Pose
 from ros2_aruco_interfaces.msg import ArucoMarkers
 from rcl_interfaces.msg import ParameterDescriptor, ParameterType
+from std_msgs.msg import Header
+from geometry_msgs.msg import Vector3, Quaternion, Transform, TransformStamped
+import tf2_ros
 
 
 class ArucoNode(rclpy.node.Node):
@@ -151,6 +154,14 @@ class ArucoNode(rclpy.node.Node):
 
         self.bridge = CvBridge()
 
+        self.tfBroadcaster = tf2_ros.TransformBroadcaster(self)
+        self.tracking_base_frame = 'camera_color_optical_frame'
+        self.tracking_marker_frame = 'handeye_target'
+        self.tracking_transform_msg_stmpd = TransformStamped(header=Header(frame_id=self.tracking_base_frame),
+                                                             child_frame_id=self.tracking_marker_frame,
+                                                             transform=Transform(translation=Vector3(),
+                                                                                 rotation=Quaternion()))
+
     def info_callback(self, info_msg):
         self.info_msg = info_msg
         self.intrinsic_mat = np.reshape(np.array(self.info_msg.k), (3, 3))
@@ -206,9 +217,26 @@ class ArucoNode(rclpy.node.Node):
                 markers.poses.append(pose)
                 markers.marker_ids.append(marker_id[0])
 
+                if marker_id == 1:
+                    # publish tracking transform
+                    self.tracking_transform_msg_stmpd.header.stamp = (self.get_clock().now() - rclpy.time.Duration(seconds=0.1)).to_msg()
+                    self.tracking_transform_msg_stmpd.transform = self.pose2transform(pose)
+
+                    self.tfBroadcaster.sendTransform(self.tracking_transform_msg_stmpd)
+
             self.poses_pub.publish(pose_array)
             self.markers_pub.publish(markers)
 
+    def pose2transform(self, pose):
+        transform = Transform()
+        transform.translation.x = pose.position.x
+        transform.translation.y = pose.position.y
+        transform.translation.z = pose.position.z
+        transform.rotation.x = pose.orientation.x
+        transform.rotation.y = pose.orientation.y
+        transform.rotation.z = pose.orientation.z
+        transform.rotation.w = pose.orientation.w
+        return transform
 
 def main():
     rclpy.init()
