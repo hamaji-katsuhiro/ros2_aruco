@@ -45,6 +45,7 @@ import tf2_ros
 
 
 class ArucoNode(rclpy.node.Node):
+
     def __init__(self):
         super().__init__("aruco_node")
 
@@ -94,29 +95,45 @@ class ArucoNode(rclpy.node.Node):
             ),
         )
 
-        self.marker_size = (
-            self.get_parameter("marker_size").get_parameter_value().double_value
+        self.declare_parameter(
+            name="tracking_base_frame",
+            value="camera_color_optical_frame",
+            descriptor=ParameterDescriptor(
+                type=ParameterType.PARAMETER_STRING,
+                description="tracking base frame.",
+            ),
         )
+
+        self.declare_parameter(
+            name="marker_id_list",
+            value=[1, 2, 3, 4],
+            descriptor=ParameterDescriptor(
+                type=ParameterType.PARAMETER_INTEGER_ARRAY,
+                description="List of marker IDs to be detected.",
+            ),
+        )
+
+        self.marker_size = (self.get_parameter("marker_size").get_parameter_value().double_value)
         self.get_logger().info(f"Marker size: {self.marker_size}")
 
         dictionary_id_name = (
-            self.get_parameter("aruco_dictionary_id").get_parameter_value().string_value
-        )
+            self.get_parameter("aruco_dictionary_id").get_parameter_value().string_value)
         self.get_logger().info(f"Marker type: {dictionary_id_name}")
 
-        image_topic = (
-            self.get_parameter("image_topic").get_parameter_value().string_value
-        )
+        image_topic = (self.get_parameter("image_topic").get_parameter_value().string_value)
         self.get_logger().info(f"Image topic: {image_topic}")
 
-        info_topic = (
-            self.get_parameter("camera_info_topic").get_parameter_value().string_value
-        )
+        info_topic = (self.get_parameter("camera_info_topic").get_parameter_value().string_value)
         self.get_logger().info(f"Image info topic: {info_topic}")
 
-        self.camera_frame = (
-            self.get_parameter("camera_frame").get_parameter_value().string_value
-        )
+        self.camera_frame = (self.get_parameter("camera_frame").get_parameter_value().string_value)
+        self.marker_id_list = (
+            self.get_parameter("marker_id_list").get_parameter_value().integer_array_value)
+        self.get_logger().info(f"marker id list: {self.marker_id_list}")
+
+        self.tracking_base_frame = (
+            self.get_parameter("tracking_base_frame").get_parameter_value().string_value)
+        self.get_logger().info(f"tracking base frame: {self.tracking_base_frame}")
 
         # Make sure we have a valid dictionary id:
         try:
@@ -124,20 +141,15 @@ class ArucoNode(rclpy.node.Node):
             if type(dictionary_id) != type(cv2.aruco.DICT_5X5_100):
                 raise AttributeError
         except AttributeError:
-            self.get_logger().error(
-                "bad aruco_dictionary_id: {}".format(dictionary_id_name)
-            )
+            self.get_logger().error("bad aruco_dictionary_id: {}".format(dictionary_id_name))
             options = "\n".join([s for s in dir(cv2.aruco) if s.startswith("DICT")])
             self.get_logger().error("valid options: {}".format(options))
 
         # Set up subscriptions
-        self.info_sub = self.create_subscription(
-            CameraInfo, info_topic, self.info_callback, qos_profile_sensor_data
-        )
+        self.info_sub = self.create_subscription(CameraInfo, info_topic, self.info_callback,
+                                                 qos_profile_sensor_data)
 
-        self.create_subscription(
-            Image, image_topic, self.image_callback, qos_profile_sensor_data
-        )
+        self.create_subscription(Image, image_topic, self.image_callback, qos_profile_sensor_data)
 
         # Set up publishers
         self.poses_pub = self.create_publisher(PoseArray, "aruco_poses", 10)
@@ -149,18 +161,12 @@ class ArucoNode(rclpy.node.Node):
         self.distortion = None
 
         dictionary = cv2.aruco.getPredefinedDictionary(dictionary_id)
-        parameters =  cv2.aruco.DetectorParameters()
+        parameters = cv2.aruco.DetectorParameters()
         self.detector = cv2.aruco.ArucoDetector(dictionary, parameters)
 
         self.bridge = CvBridge()
 
         self.tfBroadcaster = tf2_ros.TransformBroadcaster(self)
-        self.tracking_base_frame = 'camera_color_optical_frame'
-        self.tracking_marker_frame = 'handeye_target'
-        self.tracking_transform_msg_stmpd = TransformStamped(header=Header(frame_id=self.tracking_base_frame),
-                                                             child_frame_id=self.tracking_marker_frame,
-                                                             transform=Transform(translation=Vector3(),
-                                                                                 rotation=Quaternion()))
 
     def info_callback(self, info_msg):
         self.info_msg = info_msg
@@ -191,13 +197,13 @@ class ArucoNode(rclpy.node.Node):
 
         if marker_ids is not None:
             if cv2.__version__ > "4.0.0":
-                rvecs, tvecs, _ = cv2.aruco.estimatePoseSingleMarkers(
-                    corners, self.marker_size, self.intrinsic_mat, self.distortion
-                )
+                rvecs, tvecs, _ = cv2.aruco.estimatePoseSingleMarkers(corners, self.marker_size,
+                                                                      self.intrinsic_mat,
+                                                                      self.distortion)
             else:
-                rvecs, tvecs = cv2.aruco.estimatePoseSingleMarkers(
-                    corners, self.marker_size, self.intrinsic_mat, self.distortion
-                )
+                rvecs, tvecs = cv2.aruco.estimatePoseSingleMarkers(corners, self.marker_size,
+                                                                   self.intrinsic_mat,
+                                                                   self.distortion)
             for i, marker_id in enumerate(marker_ids):
                 pose = Pose()
                 pose.position.x = tvecs[i][0][0]
@@ -217,12 +223,14 @@ class ArucoNode(rclpy.node.Node):
                 markers.poses.append(pose)
                 markers.marker_ids.append(marker_id[0])
 
-                if marker_id == 1:
-                    # publish tracking transform
-                    self.tracking_transform_msg_stmpd.header.stamp = (self.get_clock().now() - rclpy.time.Duration(seconds=0.1)).to_msg()
-                    self.tracking_transform_msg_stmpd.transform = self.pose2transform(pose)
-
-                    self.tfBroadcaster.sendTransform(self.tracking_transform_msg_stmpd)
+                if marker_id in self.marker_id_list:
+                    tracking_transform_msg_stmpd = TransformStamped()
+                    tracking_transform_msg_stmpd.header.frame_id = self.tracking_base_frame
+                    tracking_transform_msg_stmpd.child_frame_id = f"aruco_marker_{marker_id[0]}"
+                    tracking_transform_msg_stmpd.header.stamp = (
+                        self.get_clock().now() - rclpy.time.Duration(seconds=0.05)).to_msg()
+                    tracking_transform_msg_stmpd.transform = self.pose2transform(pose)
+                    self.tfBroadcaster.sendTransform(tracking_transform_msg_stmpd)
 
             self.poses_pub.publish(pose_array)
             self.markers_pub.publish(markers)
@@ -237,6 +245,7 @@ class ArucoNode(rclpy.node.Node):
         transform.rotation.z = pose.orientation.z
         transform.rotation.w = pose.orientation.w
         return transform
+
 
 def main():
     rclpy.init()
